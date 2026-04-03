@@ -1,0 +1,359 @@
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- Pengecekan kapabilitas Executor di awal
+local hasHookmetamethod = (hookmetamethod and type(hookmetamethod) == "function")
+local hasDrawing = (Drawing ~= nil)
+
+local Window = Fluent:CreateWindow({
+    Title = "Violence District - Maika",
+    SubTitle = "SanzyDev Script",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460),
+    Acrylic = false,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.RightControl
+})
+
+local Tabs = {
+    Visuals = Window:AddTab({ Title = "Visuals", Icon = "eye" }),
+    Combat = Window:AddTab({ Title = "Combat", Icon = "swords" }),
+    Movement = Window:AddTab({ Title = "Movement", Icon = "person-running" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "box" })
+}
+
+local espEnabled = false
+local espObjects = {}
+
+local silentAimEnabled = false
+local camlockEnabled = false
+local hitChance = 100
+local aimSmoothness = 0.5
+local isAiming = false
+local targetPartName = "HumanoidRootPart"
+
+local sprintEnabled = false
+local sprintSpeed = 16
+
+local crosshairSize = 10
+local crosshairThickness = 2
+local crosshairGap = 5
+local crosshairColor = Color3.fromRGB(255, 0, 0)
+
+local lines = {}
+if hasDrawing then
+    for i = 1, 4 do
+        local line = Drawing.new("Line")
+        line.Visible = false
+        line.Color = crosshairColor
+        line.Thickness = crosshairThickness
+        line.Transparency = 1
+        table.insert(lines, line)
+    end
+end
+
+local function getKillerTargetPart()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Team and player.Team.Name == "Killer" then
+            local character = player.Character
+            if character and character:FindFirstChild(targetPartName) and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
+                return character[targetPartName]
+            end
+        end
+    end
+    return nil
+end
+
+-- Inject hookmetamethod HANYA jika executor support
+if hasHookmetamethod then
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+
+        if method == "FireServer" and self.Name == "Fire" and silentAimEnabled then
+            local targetPart = getKillerTargetPart()
+            if targetPart then
+                local chance = math.random(1, 100)
+                if chance <= hitChance then
+                    local origin = Camera.CFrame.Position
+                    local direction = (targetPart.Position - origin).Unit
+                    args[2] = direction
+                    return oldNamecall(self, unpack(args))
+                end
+            end
+        end
+
+        return oldNamecall(self, ...)
+    end)
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 and (camlockEnabled or silentAimEnabled) then
+        isAiming = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        isAiming = false
+    end
+end)
+
+RunService:BindToRenderStep("SanzyAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+    if camlockEnabled and isAiming then
+        local targetPart = getKillerTargetPart()
+        if targetPart then
+            local currentCFrame = Camera.CFrame
+            local targetCFrame = CFrame.new(currentCFrame.Position, targetPart.Position)
+            Camera.CFrame = currentCFrame:Lerp(targetCFrame, aimSmoothness)
+        end
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    -- ESP Logic
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local character = player.Character
+            if espEnabled and character and character:FindFirstChild("HumanoidRootPart") and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
+                if not espObjects[player] then
+                    local highlight = Instance.new("Highlight")
+                    highlight.Name = "PlayerESP"
+                    highlight.FillTransparency = 0.5
+                    highlight.OutlineTransparency = 0.1
+                    highlight.Parent = character
+                    espObjects[player] = highlight
+                end
+                
+                local targetHighlight = espObjects[player]
+                targetHighlight.Parent = character
+                local targetColor = Color3.fromRGB(255, 255, 255)
+                
+                if player.Team then
+                    if player.Team.Name == "Survivors" then
+                        targetColor = player.TeamColor.Color
+                    elseif player.Team.Name == "Killer" then
+                        targetColor = Color3.fromRGB(255, 0, 0)
+                    else
+                        targetColor = player.TeamColor.Color
+                    end
+                end
+                
+                targetHighlight.FillColor = targetColor
+                targetHighlight.OutlineColor = targetColor
+            else
+                if espObjects[player] then
+                    espObjects[player]:Destroy()
+                    espObjects[player] = nil
+                end
+            end
+        end
+    end
+
+    -- Sprint Logic
+    if sprintEnabled then
+        local character = LocalPlayer.Character
+        if character and character:FindFirstChild("Humanoid") then
+            if character.Humanoid.WalkSpeed ~= sprintSpeed then
+                character.Humanoid.WalkSpeed = sprintSpeed
+            end
+        end
+    end
+
+    -- Crosshair Logic
+    if hasDrawing and #lines == 4 then
+        if silentAimEnabled or camlockEnabled then
+            local center = Camera.ViewportSize / 2
+            local states = {
+                {Vector2.new(center.X - crosshairGap - crosshairSize, center.Y), Vector2.new(center.X - crosshairGap, center.Y)},
+                {Vector2.new(center.X + crosshairGap + crosshairSize, center.Y), Vector2.new(center.X + crosshairGap, center.Y)},
+                {Vector2.new(center.X, center.Y - crosshairGap - crosshairSize), Vector2.new(center.X, center.Y - crosshairGap)},
+                {Vector2.new(center.X, center.Y + crosshairGap + crosshairSize), Vector2.new(center.X, center.Y + crosshairGap)}
+            }
+
+            for i = 1, 4 do
+                local line = lines[i]
+                line.Visible = true
+                line.Color = crosshairColor
+                line.Thickness = crosshairThickness
+                line.From = states[i][1]
+                line.To = states[i][2]
+            end
+        else
+            for i = 1, 4 do
+                lines[i].Visible = false
+            end
+        end
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    if espObjects[player] then
+        espObjects[player]:Destroy()
+        espObjects[player] = nil
+    end
+end)
+
+--- [ UI ELEMENTS ] ---
+
+local ToggleESP = Tabs.Visuals:AddToggle("ToggleESP", {Title = "Toggle Player ESP", Default = false})
+ToggleESP:OnChanged(function(Value)
+    espEnabled = Value
+end)
+
+local DropdownTarget = Tabs.Combat:AddDropdown("DropdownTarget", {
+    Title = "Target Part",
+    Values = {"Head", "HumanoidRootPart", "Torso", "UpperTorso"},
+    Multi = false,
+    Default = 2,
+})
+DropdownTarget:OnChanged(function(Value)
+    targetPartName = Value
+end)
+
+local ToggleSilentAim = Tabs.Combat:AddToggle("ToggleSilentAim", {Title = "Silent Aim", Default = false})
+ToggleSilentAim:OnChanged(function(Value)
+    if Value and not hasHookmetamethod then
+        -- Jika dinyalakan tapi executor tidak support
+        Fluent:Notify({
+            Title = "Fitur Tidak Didukung",
+            Content = "Executor kamu tidak memiliki fungsi hookmetamethod! Silent Aim dibatalkan.",
+            Duration = 5
+        })
+        silentAimEnabled = false
+        ToggleSilentAim:SetValue(false) -- Matikan toggle kembali secara otomatis
+        return
+    end
+    silentAimEnabled = Value
+end)
+
+local SliderHitChance = Tabs.Combat:AddSlider("SliderHitChance", {
+    Title = "Silent Aim Hit Chance",
+    Description = "Persentase peluru kena target",
+    Default = 100,
+    Min = 0,
+    Max = 100,
+    Rounding = 0,
+})
+SliderHitChance:OnChanged(function(Value)
+    hitChance = Value
+end)
+
+local ToggleCamlock = Tabs.Combat:AddToggle("ToggleCamlock", {Title = "Smooth Camlock (Hold Right Click)", Default = false})
+ToggleCamlock:OnChanged(function(Value)
+    camlockEnabled = Value
+    
+    -- Peringatan opsional jika Drawing (Crosshair) tidak disupport
+    if Value and not hasDrawing then
+        Fluent:Notify({
+            Title = "Informasi Visual",
+            Content = "Executor kamu tidak mensupport Drawing API. Camlock akan tetap bekerja, tapi Crosshair tidak akan muncul.",
+            Duration = 5
+        })
+    end
+end)
+
+local SliderCamlock = Tabs.Combat:AddSlider("SliderCamlock", {
+    Title = "Camlock Smoothness",
+    Description = "Kecepatan kamera mengunci (1 = Instan)",
+    Default = 0.5,
+    Min = 0.1,
+    Max = 1,
+    Rounding = 1,
+})
+SliderCamlock:OnChanged(function(Value)
+    aimSmoothness = Value
+end)
+
+local SliderCrossSize = Tabs.Combat:AddSlider("SliderCrossSize", {
+    Title = "Crosshair Size",
+    Default = 10,
+    Min = 1,
+    Max = 50,
+    Rounding = 0,
+})
+SliderCrossSize:OnChanged(function(Value)
+    crosshairSize = Value
+end)
+
+local SliderCrossThick = Tabs.Combat:AddSlider("SliderCrossThick", {
+    Title = "Crosshair Thickness",
+    Default = 2,
+    Min = 1,
+    Max = 10,
+    Rounding = 0,
+})
+SliderCrossThick:OnChanged(function(Value)
+    crosshairThickness = Value
+end)
+
+local ToggleSprint = Tabs.Movement:AddToggle("ToggleSprint", {Title = "Force Sprint", Default = false})
+ToggleSprint:OnChanged(function(Value)
+    sprintEnabled = Value
+    if not Value then
+        local character = LocalPlayer.Character
+        if character and character:FindFirstChild("Humanoid") then
+            character.Humanoid.WalkSpeed = 16
+        end
+    end
+end)
+
+local SliderSprint = Tabs.Movement:AddSlider("SliderSprint", {
+    Title = "Sprint Speed",
+    Default = 25,
+    Min = 16,
+    Max = 100,
+    Rounding = 0,
+})
+SliderSprint:OnChanged(function(Value)
+    sprintSpeed = Value
+end)
+
+Tabs.Misc:AddButton({
+    Title = "Remove Game Blur / DOF",
+    Description = "Hapus efek blur dan kabut dari map",
+    Callback = function()
+        for _, obj in pairs(Lighting:GetChildren()) do
+            if obj:IsA("BlurEffect") or obj:IsA("DepthOfFieldEffect") or obj:IsA("Atmosphere") or obj:IsA("ColorCorrectionEffect") or obj:IsA("SunRaysEffect") then
+                obj.Enabled = false
+            end
+        end
+        if Camera:FindFirstChildOfClass("BlurEffect") then
+            Camera:FindFirstChildOfClass("BlurEffect").Enabled = false
+        end
+        if Camera:FindFirstChildOfClass("DepthOfFieldEffect") then
+            Camera:FindFirstChildOfClass("DepthOfFieldEffect").Enabled = false
+        end
+        Lighting.FogEnd = 100000
+        Fluent:Notify({Title = "Visual", Content = "Lighting dibersihkan!", Duration = 3})
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Rejoin Server",
+    Description = "Masuk kembali ke server yang sama",
+    Callback = function()
+        if #Players:GetPlayers() <= 1 then
+            LocalPlayer:Kick("Rejoining...")
+            task.wait()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        else
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end
+    end
+})
+
+Window:SelectTab(1)
+Fluent:Notify({
+    Title = "Violence District",
+    Content = "Maika Script Loaded Successfully!",
+    Duration = 5
+})
